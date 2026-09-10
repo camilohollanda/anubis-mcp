@@ -183,24 +183,16 @@ defmodule Anubis.Server.Session.Scheduler do
 
   defp do_handle_request(module, %{"method" => "tools/call"} = request, frame, _method) do
     tool_name = get_in(request, ["params", "name"])
+    arguments = get_in(request, ["params", "arguments"])
 
-    :telemetry.span(
-      [:anubis_mcp | Telemetry.event_server_tool_call()],
-      %{tool: tool_name},
-      fn ->
-        result = module.handle_request(request, frame)
-        {result, %{tool: tool_name, is_error: tool_call_error?(result)}}
-      end
-    )
+    Telemetry.span_tool_call(tool_name, arguments, fn ->
+      module.handle_request(request, frame)
+    end)
   end
 
   defp do_handle_request(module, request, frame, _method) do
     module.handle_request(request, frame)
   end
-
-  defp tool_call_error?({:error, _reason, _frame}), do: true
-  defp tool_call_error?({:reply, %{"isError" => true}, _frame}), do: true
-  defp tool_call_error?(_result), do: false
 
   defp decode_task_result({:reply, response, %Frame{} = frame}, inflight, state) do
     Telemetry.execute(
