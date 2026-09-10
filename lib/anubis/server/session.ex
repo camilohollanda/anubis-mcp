@@ -1086,13 +1086,7 @@ defmodule Anubis.Server.Session do
     end)
   end
 
-  # `server_instructions/0` is resolved once, when the session process starts, so it cannot know
-  # who is connecting. A server that needs to vary its guidance per connection defines
-  # `server_instructions/1`, resolved here instead: the transport merges the request's assigns
-  # into the frame before this request is dispatched, so they are available now.
-  #
-  # `init/2` is not an alternative — it runs on `notifications/initialized`, after this result
-  # has been sent.
+  # Resolved here, not at session start, so the frame carries this request's assigns.
   defp connection_instructions(%{server_module: module} = state) do
     if Anubis.exported?(module, :server_instructions, 1) do
       module.server_instructions(prepare_frame(state))

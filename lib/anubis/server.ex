@@ -200,8 +200,20 @@ defmodule Anubis.Server do
 
   `c:init/2` cannot serve this purpose: it runs when the client acknowledges the handshake,
   after the `initialize` result carrying the instructions has already been sent.
+
+  ## Examples
+
+      @impl Anubis.Server
+      def server_instructions(frame) do
+        case frame.assigns[:plan] do
+          :enterprise -> "You may call `bulk_export`. Confirm the range before exporting."
+          _ -> "Exports run one record at a time."
+        end
+      end
+
+  Return `nil` to omit the field from the `initialize` result.
   """
-  @callback server_instructions(frame :: Anubis.Server.Frame.t()) :: String.t() | nil
+  @callback server_instructions(frame :: Frame.t()) :: String.t() | nil
 
   @doc """
   Called when a session is being auto-recovered after expiry.
@@ -604,6 +616,7 @@ defmodule Anubis.Server do
 
     resources_config =
       %{}
+      # Notification Functions — all use send(self(), ...) to the current Session process
       |> then(&if(is_nil(subscribe?), do: &1, else: Map.put(&1, :subscribe, subscribe?)))
       |> then(&if(is_nil(list_changed?), do: &1, else: Map.put(&1, :listChanged, list_changed?)))
 
@@ -683,8 +696,6 @@ defmodule Anubis.Server do
   end
 
   def validate_server_info!(_, name, version) when is_binary(name) and is_binary(version), do: :ok
-
-  # Notification Functions — all use send(self(), ...) to the current Session process
 
   @doc """
   Sends a resources list changed notification.
