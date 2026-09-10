@@ -689,7 +689,7 @@ defmodule Anubis.Server.Session do
           "serverInfo" => state.server_info,
           "capabilities" => protocol_module.server_capabilities(state.capabilities)
         },
-        state.instructions
+        connection_instructions(state)
       )
 
     Logging.server_event("initializing", %{
@@ -1084,6 +1084,21 @@ defmodule Anubis.Server.Session do
     Enum.map(requests, fn {id, req} ->
       %{id: id, method: req[:method]}
     end)
+  end
+
+  # `server_instructions/0` is resolved once, when the session process starts, so it cannot know
+  # who is connecting. A server that needs to vary its guidance per connection defines
+  # `server_instructions/1`, resolved here instead: the transport merges the request's assigns
+  # into the frame before this request is dispatched, so they are available now.
+  #
+  # `init/2` is not an alternative — it runs on `notifications/initialized`, after this result
+  # has been sent.
+  defp connection_instructions(%{server_module: module} = state) do
+    if Anubis.exported?(module, :server_instructions, 1) do
+      module.server_instructions(prepare_frame(state))
+    else
+      state.instructions
+    end
   end
 
   defp maybe_put_instructions(result, nil), do: result
