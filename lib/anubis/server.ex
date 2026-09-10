@@ -647,7 +647,6 @@ defmodule Anubis.Server do
 
     resources_config =
       %{}
-      # Notification Functions — all use send(self(), ...) to the current Session process
       |> then(&if(is_nil(subscribe?), do: &1, else: Map.put(&1, :subscribe, subscribe?)))
       |> then(&if(is_nil(list_changed?), do: &1, else: Map.put(&1, :listChanged, list_changed?)))
 
@@ -727,6 +726,8 @@ defmodule Anubis.Server do
   end
 
   def validate_server_info!(_, name, version) when is_binary(name) and is_binary(version), do: :ok
+
+  # Notification Functions — all use send(self(), ...) to the current Session process
 
   @doc """
   Sends a resources list changed notification.
