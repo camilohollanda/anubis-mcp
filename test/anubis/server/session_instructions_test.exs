@@ -59,6 +59,22 @@ defmodule Anubis.Server.SessionInstructionsTest do
     end
   end
 
+  defmodule DualEraPerConnectionServer do
+    @moduledoc false
+
+    use Anubis.Server,
+      name: "dual-era-per-connection-server",
+      version: "1.0.0",
+      capabilities: [:tools],
+      protocol_versions: ["2026-07-28", "2025-11-25"]
+
+    @impl Anubis.Server
+    def server_instructions, do: "Static fallback"
+
+    @impl Anubis.Server
+    def server_instructions(frame), do: "Instructions for #{frame.assigns[:audience] || "an unknown caller"}"
+  end
+
   describe "instructions via use option" do
     test "initialize response includes instructions" do
       {session, _transport} = start_session(InstructionsViaOptionServer)
@@ -132,6 +148,25 @@ defmodule Anubis.Server.SessionInstructionsTest do
     end
   end
 
+  describe "instructions per request in the stateless era" do
+    test "server/discover resolves them from the request's frame" do
+      {session, _transport} = start_session(DualEraPerConnectionServer)
+
+      result = send_discover(session, %{assigns: %{audience: "a support agent"}})
+
+      assert result["instructions"] == "Instructions for a support agent"
+    end
+
+    test "one request's assigns do not decide the next request's instructions" do
+      {session, _transport} = start_session(DualEraPerConnectionServer)
+
+      send_discover(session, %{assigns: %{audience: "a support agent"}})
+
+      assert send_discover(session, %{assigns: %{audience: "a reviewer"}})["instructions"] ==
+               "Instructions for a reviewer"
+    end
+  end
+
   # Helpers
 
   defp start_session(server_module) do
@@ -156,6 +191,18 @@ defmodule Anubis.Server.SessionInstructionsTest do
       )
 
     {session, transport}
+  end
+
+  defp send_discover(session, transport_context) do
+    meta = %{
+      "io.modelcontextprotocol/protocolVersion" => "2026-07-28",
+      "io.modelcontextprotocol/clientInfo" => %{"name" => "TestClient", "version" => "1.0.0"},
+      "io.modelcontextprotocol/clientCapabilities" => %{}
+    }
+
+    request = %{"jsonrpc" => "2.0", "id" => 1, "method" => "server/discover", "params" => %{"_meta" => meta}}
+    {:ok, response_json} = GenServer.call(session, {:mcp_request, request, transport_context})
+    JSON.decode!(response_json)["result"]
   end
 
   defp send_initialize(session, transport_context \\ %{}) do
