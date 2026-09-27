@@ -115,6 +115,19 @@ The `MCP-Protocol-Version` header picks the era for each request. Without it, or
 - The request is served by a session started for it alone and stopped once it answers. `init/2` runs for it with that request's client info, and the frame does not carry over to the next request. The `[:server, :init]` and `[:server, :terminate]` telemetry events fire once per such request.
 - No `mcp-session-id` is read or sent, GET and DELETE are 405, and a notification is a 202 with no body.
 - A version the server does not declare is a 400 with `-32022` listing the stateless versions it serves. A server that declares none answers as before, so clients that speak both eras fall back to `initialize`.
+- A request id must be a string of at most 256 bytes or a 64-bit integer (`-32600` otherwise, with no echo of it), and a `progressToken` has the same bounds (`-32602`). A body the plug decodes itself refuses integer literals longer than 64 characters.
+
+#### Tool parameters in headers
+
+A tool can ask 2026-07-28 clients to mirror a parameter into an `Mcp-Param-{Name}` header, so that a proxy or load balancer can route on it without reading the body:
+
+```elixir
+schema do
+  field :region, :string, required: true, mcp_header: "Region"
+end
+```
+
+The parameter's schema then carries `"x-mcp-header": "Region"`. The name must be an HTTP token, unique regardless of case within the tool, on a string, integer or boolean parameter that is not inside a list; building the schema raises otherwise. A `tools/call` whose header is missing for an argument the body carries, disagrees with it after `=?base64?…?=` decoding, or holds characters a header value cannot, is refused with `-32020` and HTTP 400. Handshake-era requests are not checked.
 
 #### Progress and cancellation
 
@@ -136,7 +149,7 @@ Use `:public` only for a result that is the same for every caller; a list filter
 
 #### Subscriptions
 
-`subscriptions/listen` answers with an SSE stream that stays open. It opens with `notifications/subscriptions/acknowledged`, naming the part of the client's filter the server honors: a list-changed flag for a capability declared with `list_changed?: true`, and a resource URI when `resources` is declared with `subscribe?: true` and the URI passes the same scope check as `resources/subscribe`. Only those notifications follow, each carrying the subscription id in `_meta`.
+`subscriptions/listen` answers with an SSE stream that stays open. It opens with `notifications/subscriptions/acknowledged`, naming the part of the client's filter the server honors: a list-changed flag for a capability declared with `list_changed?: true`, and a resource URI when `resources` is declared with `subscribe?: true` and the URI passes the same scope check as `resources/subscribe`. Only those notifications follow, each carrying the subscription id in `_meta`. A request may name at most 1,000 `resourceSubscriptions` (more is `-32602`), and a URI named twice is honored once.
 
 The stream is served by a session that lives as long as the stream does and does not expire when idle. `init/2` runs for it once, and the server emits into it the way it does in the handshake era, from its own callbacks: `Anubis.Server.send_resource_updated/2`, `send_tools_list_changed/0` and the other list-changed helpers, typically from `handle_info/2` after subscribing the session to the application's events in `init/2`. Other notifications, such as log messages, never reach the stream. When the session stops or the transport shuts down, the stream ends with a completion result for the `subscriptions/listen` request.
 
