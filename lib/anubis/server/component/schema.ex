@@ -2,6 +2,7 @@ defmodule Anubis.Server.Component.Schema do
   @moduledoc false
 
   alias Anubis.Server.Component
+  alias Anubis.Server.McpParam
 
   @type schema :: map() | list()
   @type field_type :: atom() | tuple()
@@ -19,9 +20,11 @@ defmodule Anubis.Server.Component.Schema do
     # Defaults live in `{type, {:default, v}}` after `__build_field__/2`. Strip
     # them from JSON Schema output so consumer schemas don't surface internal
     # defaults — prompt docs and validation still use them.
-    schema
-    |> Component.__expand_user_input__()
+    expanded = Component.__expand_user_input__(schema)
+
+    expanded
     |> Peri.to_json_schema(exclude_meta_keys: [:default])
+    |> McpParam.annotate(expanded)
   end
 
   @spec to_prompt_arguments(schema() | nil) :: [prompt_argument()]
