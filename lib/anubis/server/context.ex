@@ -55,6 +55,12 @@ defmodule Anubis.Server.Context do
   `Anubis.Server.InputRequired.state/2`. They are set for the `tools/call`,
   `prompts/get` and `resources/read` request that carries them, and are empty
   and `nil` otherwise.
+
+  ## Request meta field
+
+  `request_meta` carries the `_meta` of the request a handler is serving, such
+  as its `progressToken`. Empty map outside a request, or when the client sent
+  none.
   """
 
   @type auth_claims :: %{
@@ -80,7 +86,8 @@ defmodule Anubis.Server.Context do
           client_capabilities: map(),
           log_level: String.t() | nil,
           input_responses: %{String.t() => map()},
-          request_state: term()
+          request_state: term(),
+          request_meta: map()
         }
 
   defstruct session_id: nil,
@@ -94,5 +101,6 @@ defmodule Anubis.Server.Context do
             client_capabilities: %{},
             log_level: nil,
             input_responses: %{},
-            request_state: nil
+            request_state: nil,
+            request_meta: %{}
 end
