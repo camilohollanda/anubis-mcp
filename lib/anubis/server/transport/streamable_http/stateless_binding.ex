@@ -393,25 +393,44 @@ if Code.ensure_loaded?(Plug) do
 
     # A subscription is answered with a stream, which a client must accept.
     defp accepts_response(conn, %{"method" => "subscriptions/listen"}) do
-      if accepts_stream?(conn), do: :ok, else: {:error, :not_acceptable}
+      if accepts?(conn, "text/event-stream"), do: :ok, else: {:error, :not_acceptable}
     end
 
     defp accepts_response(_conn, _message), do: :ok
 
-    defp accepts_stream?(conn) do
-      conn |> get_req_header("accept") |> List.first("") |> String.contains?("text/event-stream")
-    end
+    defp accepts_stream?(conn), do: accepts?(conn, "text/event-stream")
 
     defp not_acceptable do
       Error.protocol(:invalid_request, %{message: "Client must accept text/event-stream"})
     end
 
     defp validate_accept_header(conn) do
-      accept = conn |> get_req_header("accept") |> List.first("")
+      if accepts?(conn, "application/json"), do: :ok, else: {:error, :invalid_accept_header}
+    end
 
-      if String.contains?(accept, "application/json"),
-        do: :ok,
-        else: {:error, :invalid_accept_header}
+    # A media type is acceptable when the client names it with a quality above
+    # zero (RFC 9110, section 12.4.2); `q=0` marks it unacceptable.
+    defp accepts?(conn, media_type) do
+      conn
+      |> get_req_header("accept")
+      |> Enum.flat_map(&String.split(&1, ","))
+      |> Enum.any?(&acceptable_range?(&1, media_type))
+    end
+
+    defp acceptable_range?(range, media_type) do
+      [type | params] = range |> String.split(";") |> Enum.map(&String.trim/1)
+      String.downcase(type) == media_type and quality(params) > 0
+    end
+
+    defp quality(params) do
+      Enum.find_value(params, 1.0, fn param ->
+        with ["q", value] <- param |> String.downcase() |> String.split("=", parts: 2) |> Enum.map(&String.trim/1),
+             {q, ""} <- Float.parse(value) do
+          q
+        else
+          _other -> nil
+        end
+      end)
     end
 
     defp read_json(conn, opts) do

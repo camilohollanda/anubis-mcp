@@ -55,7 +55,8 @@ defmodule Anubis.Server.Transport.StreamableHTTP.StatelessBindingTest do
     component(WhoAmITool)
 
     @impl true
-    def init(client_info, frame), do: {:ok, Frame.assign(frame, :initialized_for, client_info["name"])}
+    def init(client_info, frame) when is_map(client_info),
+      do: {:ok, Frame.assign(frame, :initialized_for, client_info["name"])}
   end
 
   setup do
@@ -119,6 +120,47 @@ defmodule Anubis.Server.Transport.StreamableHTTP.StatelessBindingTest do
       assert conn.status == 200
       assert JSON.decode!(conn.resp_body)["result"]["supportedVersions"] == [@version]
     end
+
+    test "is a batch when Plug.Parsers put an array under _json", %{opts: opts} do
+      message = %{"jsonrpc" => "2.0", "id" => 1, "method" => "server/discover", "params" => %{}}
+
+      :post
+      |> conn("/", %{"_json" => [message]})
+      |> stateless_headers()
+      |> StreamableHTTPPlug.call(opts)
+      |> assert_batch_refused()
+    end
+  end
+
+  describe "the Accept header" do
+    test "a client that marks application/json unacceptable gets a 406", %{opts: opts} do
+      conn = post_tool_call(opts, headers: [{"accept", "application/json;q=0, text/event-stream"}])
+
+      assert conn.status == 406
+    end
+
+    test "a quality above zero and a second Accept line are honored", %{opts: opts} do
+      conn =
+        [headers: [{"accept", "text/event-stream"}]]
+        |> tool_call_conn()
+        |> Plug.Conn.prepend_req_headers([{"accept", "Application/JSON; q=0.5"}])
+        |> StreamableHTTPPlug.call(opts)
+
+      assert conn.status == 200
+    end
+  end
+
+  describe "a batch" do
+    test "is a 400 with -32600", %{opts: opts} do
+      body = JSON.encode!([%{"jsonrpc" => "2.0", "id" => 1, "method" => "server/discover", "params" => %{}}])
+
+      :post
+      |> conn("/", body)
+      |> put_req_header("content-type", "application/json")
+      |> stateless_headers()
+      |> StreamableHTTPPlug.call(opts)
+      |> assert_batch_refused()
+    end
   end
 
   describe "tools/call" do
@@ -131,6 +173,10 @@ defmodule Anubis.Server.Transport.StreamableHTTP.StatelessBindingTest do
                "leaked" => nil,
                "client" => "BindingProbe"
              }
+    end
+
+    test "runs init/2 with an empty map when the request declares no client info", %{opts: opts} do
+      assert %{"initialized_for" => nil, "client" => nil} = call_who_am_i(opts, client_info: nil)
     end
 
     test "keeps one request's assigns and client info out of the next", %{opts: opts} do
@@ -351,6 +397,10 @@ defmodule Anubis.Server.Transport.StreamableHTTP.StatelessBindingTest do
   defp tool_payload(%{"result" => %{"content" => [%{"text" => text}]}}), do: JSON.decode!(text)
 
   defp post_tool_call(opts, call_opts) do
+    call_opts |> tool_call_conn() |> StreamableHTTPPlug.call(opts)
+  end
+
+  defp tool_call_conn(call_opts) do
     client_info = Keyword.get(call_opts, :client_info, @client_info)
     extra = Keyword.get(call_opts, :headers, [])
     dropped = Keyword.get(call_opts, :drop_headers, [])
@@ -364,7 +414,6 @@ defmodule Anubis.Server.Transport.StreamableHTTP.StatelessBindingTest do
     |> tool_call_body()
     |> stateless_conn(headers)
     |> merge_assigns(call_opts |> Keyword.get(:assigns, %{}) |> Map.to_list())
-    |> StreamableHTTPPlug.call(opts)
   end
 
   defp tool_call_body(client_info) do
@@ -401,18 +450,29 @@ defmodule Anubis.Server.Transport.StreamableHTTP.StatelessBindingTest do
     Enum.reduce(headers, conn, fn {name, value}, conn -> put_req_header(conn, name, value) end)
   end
 
-  defp meta(client_info) do
-    %{
-      "io.modelcontextprotocol/protocolVersion" => @version,
-      "io.modelcontextprotocol/clientInfo" => client_info,
-      "io.modelcontextprotocol/clientCapabilities" => %{}
-    }
+  defp meta(nil) do
+    %{"io.modelcontextprotocol/protocolVersion" => @version, "io.modelcontextprotocol/clientCapabilities" => %{}}
   end
+
+  defp meta(client_info), do: Map.put(meta(nil), "io.modelcontextprotocol/clientInfo", client_info)
 
   defp assert_header_mismatch(conn, header) do
     assert conn.status == 400
     error = JSON.decode!(conn.resp_body)["error"]
     assert error["code"] == -32_020
     assert inspect(error) =~ header
+  end
+
+  defp stateless_headers(conn) do
+    conn
+    |> put_req_header("accept", "application/json, text/event-stream")
+    |> put_req_header("mcp-protocol-version", @version)
+    |> put_req_header("mcp-method", "server/discover")
+  end
+
+  defp assert_batch_refused(conn) do
+    assert conn.status == 400
+    assert %{"error" => %{"code" => -32_600, "data" => %{"message" => message}}} = JSON.decode!(conn.resp_body)
+    assert message =~ "Batched"
   end
 end
