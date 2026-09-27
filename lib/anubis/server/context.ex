@@ -32,6 +32,12 @@ defmodule Anubis.Server.Context do
   request params (the MCP extension namespace), available to every callback
   including `init/2`. Empty map when the client sent none. Metadata sent under
   `clientInfo._meta` is preserved inside `client_info` itself.
+
+  ## Request meta field
+
+  `request_meta` carries the `_meta` of the request a handler is serving, such
+  as its `progressToken`. Empty map outside a request, or when the client sent
+  none.
   """
 
   @type auth_claims :: %{
@@ -51,7 +57,8 @@ defmodule Anubis.Server.Context do
           init_meta: map(),
           headers: %{String.t() => String.t()},
           remote_ip: :inet.ip_address() | nil,
-          auth: auth_claims() | nil
+          auth: auth_claims() | nil,
+          request_meta: map()
         }
 
   defstruct session_id: nil,
@@ -59,5 +66,6 @@ defmodule Anubis.Server.Context do
             init_meta: %{},
             headers: %{},
             remote_ip: nil,
-            auth: nil
+            auth: nil,
+            request_meta: %{}
 end
