@@ -41,6 +41,12 @@ defmodule Anubis.Server.Transport.StreamableHTTP.SubscriptionsTest do
       {:noreply, frame}
     end
 
+    def handle_info({:whoami, pid}, frame) do
+      context = frame.context
+      send(pid, {:whoami, context.client_info["name"], context.headers["mcp-method"], context.protocol_version})
+      {:noreply, frame}
+    end
+
     def handle_info(:tools_changed, frame) do
       Anubis.Server.send_tools_list_changed()
       {:noreply, frame}
@@ -154,10 +160,45 @@ defmodule Anubis.Server.Transport.StreamableHTTP.SubscriptionsTest do
       assert DynamicSupervisor.count_children(session_sup).active == 0
     end
 
+    test "registers the stream with the plug's subscriber metadata", %{transport: transport} do
+      opts = StreamableHTTPPlug.init(server: ListeningServer, subscriber_metadata: fn _conn -> %{tenant: "acme"} end)
+
+      {stream, _session} = open(opts, %{"toolsListChanged" => true})
+
+      assert StreamableHTTP.handler_count(transport, &(&1[:tenant] == "acme")) == 1
+
+      close(stream)
+    end
+
+    test "is refused with a 406 when the client does not accept a stream", %{opts: opts, session_sup: session_sup} do
+      conn =
+        :post
+        |> conn("/", listen_body(%{"toolsListChanged" => true}))
+        |> put_req_header("content-type", "application/json")
+        |> put_req_header("accept", "application/json")
+        |> put_req_header("mcp-protocol-version", @version)
+        |> put_req_header("mcp-method", "subscriptions/listen")
+        |> StreamableHTTPPlug.call(opts)
+
+      assert conn.status == 406
+      assert %{"id" => 7, "error" => %{"code" => -32_600}} = JSON.decode!(conn.resp_body)
+      assert DynamicSupervisor.count_children(session_sup).active == 0
+    end
+
     test "keeps the session with no idle expiry while it listens", %{opts: opts} do
       {stream, session} = open(opts, %{"toolsListChanged" => true})
 
       assert :sys.get_state(session).expiry_timer == nil
+
+      close(stream)
+    end
+
+    test "callbacks after the listen reply still see the listen request's context", %{opts: opts} do
+      {stream, session} = open(opts, %{"toolsListChanged" => true})
+
+      send(session, {:whoami, self()})
+
+      assert_receive {:whoami, "Listener", "subscriptions/listen", @version}, 2_000
 
       close(stream)
     end
@@ -195,20 +236,7 @@ defmodule Anubis.Server.Transport.StreamableHTTP.SubscriptionsTest do
   defp open(opts, filter) do
     test_pid = self()
 
-    body =
-      JSON.encode!(%{
-        "jsonrpc" => "2.0",
-        "id" => 7,
-        "method" => "subscriptions/listen",
-        "params" => %{
-          "notifications" => filter,
-          "_meta" => %{
-            "io.modelcontextprotocol/protocolVersion" => @version,
-            "io.modelcontextprotocol/clientInfo" => %{"name" => "Listener", "version" => "1.0.0"},
-            "io.modelcontextprotocol/clientCapabilities" => %{}
-          }
-        }
-      })
+    body = listen_body(filter)
 
     stream =
       Task.async(fn ->
@@ -242,6 +270,22 @@ defmodule Anubis.Server.Transport.StreamableHTTP.SubscriptionsTest do
       {:message_queue_len, 0} -> :ok
       _pending -> drain(session)
     end
+  end
+
+  defp listen_body(filter) do
+    JSON.encode!(%{
+      "jsonrpc" => "2.0",
+      "id" => 7,
+      "method" => "subscriptions/listen",
+      "params" => %{
+        "notifications" => filter,
+        "_meta" => %{
+          "io.modelcontextprotocol/protocolVersion" => @version,
+          "io.modelcontextprotocol/clientInfo" => %{"name" => "Listener", "version" => "1.0.0"},
+          "io.modelcontextprotocol/clientCapabilities" => %{}
+        }
+      }
+    })
   end
 
   defp close(stream) do
